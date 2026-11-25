@@ -21,6 +21,9 @@
   ],
 
   // Stockage R2 des vidéos des annonceurs : crée un bucket nommé "vupay-media".
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "vupay-media" }
+  ],
   
 
   // Réglages publics. Les secrets (ADMIN_TOKEN, clés API) se mettent dans le tableau de bord Cloudflare.
