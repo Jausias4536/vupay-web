@@ -17,7 +17,7 @@
 
   // Base de données D1 : colle ici l'identifiant de ta base "vupay-db".
   "d1_databases": [
-    { "binding": "DB", "database_name": "vupay-db", "database_id": "COLLE-ICI-L-ID-DE-TA-BASE-D1" }
+    { "binding": "DB", "database_name": "vupay-db", "database_id": "6475c916-ebcf-42a3-bb27-2c28d19e10ce" }
   ],
 
   // Stockage R2 des vidéos des annonceurs : crée un bucket nommé "vupay-media".
