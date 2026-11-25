@@ -1,0 +1,8 @@
+# Secrets pour tester en local avec "npx wrangler dev" (copie en .dev.vars).
+# En ligne, ajoute-les dans Cloudflare : Workers & Pages > vupay > Settings > Variables and Secrets.
+ADMIN_TOKEN=change-moi-par-un-long-secret
+SMS_API_URL=
+SMS_API_KEY=
+PAYOUT_API_URL=
+PAYOUT_API_KEY=
+PAYOUT_WEBHOOK_SECRET=
