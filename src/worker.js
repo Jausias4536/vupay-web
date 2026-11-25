@@ -55,6 +55,7 @@ function cfg(env) {
     bonus: +(env.DAILY_BONUS || 300),
     maxUpload: Math.min(+(env.MAX_UPLOAD_MB || 95), 95) * 1024 * 1024,
     maxVideoSec: +(env.MAX_VIDEO_SECONDS || 180),
+    maxYoutubeSec: +(env.MAX_YOUTUBE_SECONDS || 600),
     tz: env.TIMEZONE || 'Africa/Dakar',
     payoutMode: env.PAYOUT_PROVIDER || 'simulation'
   };
@@ -104,6 +105,14 @@ async function authUser(env, req) {
   return u;
 }
 
+// Seuls les numéros listés dans le secret ADMIN_PHONE peuvent ajouter ou retirer des vidéos.
+// Format : 771234567 ou 221771234567, plusieurs numéros séparés par des virgules.
+function isAdminUser(env, u) {
+  const list = String(env.ADMIN_PHONE || '').split(',').map(x => x.replace(/\D/g, '')).filter(Boolean);
+  return list.includes(u.phone) || list.includes((COUNTRIES[u.country][1] + u.phone).replace(/\D/g, ''));
+}
+function requireAdminUser(env, u) { if (!isAdminUser(env, u)) fail(403, 'Seul l’administrateur peut ajouter ou retirer des vidéos.'); }
+
 const fmtTx = t => ({ id: t.id, kind: t.kind, label: t.label, amount: t.amount, status: t.status, ref: t.ref, op: t.op, num: t.num, steps: t.steps ? JSON.parse(t.steps) : null, at: t.created });
 
 async function setTxStatus(env, ref, status) {
@@ -143,7 +152,7 @@ async function mePayload(env, userId) {
   for (const v of views) done[v.video_id] = v.status;
   return {
     user: { name: u.name, country: u.country, phone: u.phone, op: u.op, code: u.ref_code, since: u.created },
-    balance: u.balance, total: u.total, watched: u.watched, done, todayGain: gain.s, bonus: !!bonus, tx: txs.map(fmtTx),
+    balance: u.balance, total: u.total, watched: u.watched, done, todayGain: gain.s, bonus: !!bonus, tx: txs.map(fmtTx), admin: isAdminUser(env, u),
     config: { goal: c.goal, bonus: c.bonus, minOut: c.minOut }
   };
 }
@@ -151,6 +160,7 @@ async function mePayload(env, userId) {
 function publicVideo(v) {
   const o = { id: v.id, kind: v.kind, title: v.title, brand: v.brand, cat: v.cat, pay: v.pay, q: v.q, opts: JSON.parse(v.opts), dur: v.dur };
   if (v.kind === 'demo') Object.assign(o, { frames: JSON.parse(v.frames), art: v.art, color: v.color });
+  else if (v.kind === 'youtube') Object.assign(o, { youtubeId: v.file, poster: `https://i.ytimg.com/vi/${v.file}/hqdefault.jpg` });
   else Object.assign(o, { url: '/media/' + v.file, poster: v.poster ? '/posters/' + v.poster : null });
   return o;
 }
@@ -297,7 +307,7 @@ route('POST', '/api/webhooks/payout', async (req, env) => {
 
 // ---- espace annonceur
 route('PUT', '/api/uploads', async (req, env) => {
-  await authUser(env, req);
+  requireAdminUser(env, await authUser(env, req));
   if (!env.MEDIA) fail(503, 'Le stockage des vidéos (R2) n’est pas encore activé.');
   const type = String(req.headers.get('content-type') || '').split(';')[0];
   const ext = { 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov' }[type];
@@ -311,37 +321,46 @@ route('PUT', '/api/uploads', async (req, env) => {
 });
 
 route('POST', '/api/videos', async (req, env) => {
-  const u = await authUser(env, req), b = await readJson(req, 3 * 1024 * 1024), c = cfg(env);
-  if (!env.MEDIA) fail(503, 'Le stockage des vidéos (R2) n’est pas encore activé.');
-  const file = String(b.fileId || '');
-  if (!/^[a-f0-9]{24}\.(mp4|webm|mov)$/.test(file) || !(await env.MEDIA.head('videos/' + file))) fail(400, 'Vidéo introuvable, renvoie-la.');
+  const u = await authUser(env, req);
+  requireAdminUser(env, u);
+  const b = await readJson(req, 3 * 1024 * 1024), c = cfg(env);
+  const youtube = b.youtube ? String(b.youtube) : null;
+  if (youtube && !/^[A-Za-z0-9_-]{11}$/.test(youtube)) fail(400, 'Lien YouTube invalide.');
+  const file = youtube || String(b.fileId || '');
+  if (!youtube) {
+    if (!env.MEDIA) fail(503, 'Le stockage des vidéos (R2) n’est pas encore activé.');
+    if (!/^[a-f0-9]{24}\.(mp4|webm|mov)$/.test(file) || !(await env.MEDIA.head('videos/' + file))) fail(400, 'Vidéo introuvable, renvoie-la.');
+  }
   const title = str(b.title, 70, 'Titre'), brand = str(b.brand, 30, 'Marque'), q = str(b.q, 90, 'Question');
   if (!CATS.includes(b.cat)) fail(400, 'Catégorie invalide.');
   if (!PAYS.includes(+b.pay)) fail(400, 'Gain par vue invalide.');
   if (!Array.isArray(b.opts) || b.opts.length !== 4) fail(400, 'Il faut 4 réponses.');
   const opts = b.opts.map((o, i) => str(o, 40, 'Réponse ' + (i + 1)));
   const answer = +b.answer; if (![0, 1, 2, 3].includes(answer)) fail(400, 'Coche la bonne réponse.');
-  const dur = Number(b.dur); if (!(dur > 0 && dur <= c.maxVideoSec + 1)) fail(400, `La vidéo doit durer ${c.maxVideoSec / 60} minutes maximum.`);
+  const maxSec = youtube ? c.maxYoutubeSec : c.maxVideoSec;
+  const dur = Number(b.dur); if (!(dur > 0 && dur <= maxSec + 1)) fail(400, `La vidéo doit durer ${maxSec / 60} minutes maximum.`);
   let poster = null;
-  const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(String(b.poster || ''));
+  const m = youtube ? null : /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(String(b.poster || ''));
   if (m) {
     poster = rid(10) + '.jpg';
     await env.MEDIA.put('posters/' + poster, Uint8Array.from(atob(m[1]), ch => ch.charCodeAt(0)), { httpMetadata: { contentType: 'image/jpeg' } });
   }
   const id = 'v' + rid(8);
-  await run(env, `INSERT INTO videos(id, kind, title, brand, cat, pay, q, opts, answer, dur, file, poster, owner_id, created) VALUES(?, 'video', ?,?,?,?,?,?,?,?,?,?,?,?)`,
-    id, title, brand, b.cat, +b.pay, q, JSON.stringify(opts), answer, dur, file, poster, u.id, nowIso());
+  await run(env, `INSERT INTO videos(id, kind, title, brand, cat, pay, q, opts, answer, dur, file, poster, owner_id, created) VALUES(?, ?, ?,?,?,?,?,?,?,?,?,?,?,?)`,
+    id, youtube ? 'youtube' : 'video', title, brand, b.cat, +b.pay, q, JSON.stringify(opts), answer, dur, file, poster, u.id, nowIso());
   return publicVideo(await one(env, 'SELECT * FROM videos WHERE id = ?', id));
 });
 
 route('GET', '/api/my-videos', async (req, env) => {
   const u = await authUser(env, req);
+  requireAdminUser(env, u);
   return (await all(env, `SELECT v.*, (SELECT COUNT(*) FROM views w WHERE w.video_id = v.id AND w.status = 'ok') views
     FROM videos v WHERE owner_id = ? AND active = 1 ORDER BY created DESC`, u.id)).map(v => ({ ...publicVideo(v), views: v.views }));
 });
 
 route('DELETE', '/api/videos/:id', async (req, env, p) => {
   const u = await authUser(env, req);
+  requireAdminUser(env, u);
   const r = await run(env, 'UPDATE videos SET active = 0 WHERE id = ? AND owner_id = ?', p.id, u.id);
   if (!r.meta.changes) fail(404, 'Vidéo introuvable.');
   return { ok: true };
