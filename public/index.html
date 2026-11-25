@@ -380,6 +380,9 @@ body.cineon input,body.cineon select{background:rgba(255,255,255,.07);border:1.5
 .boot{min-height:70vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;font-weight:700;color:var(--mute)}
 .boot svg{width:56px;height:56px}
 .st.stx{color:var(--red)}
+.ytbox{position:absolute;inset:0;background:#000}.ytbox iframe,#yt{position:absolute;inset:0;width:100%;height:100%;border:0}
+.ytshield{position:absolute;inset:0}
+.orline{display:flex;align-items:center;gap:12px;color:var(--mute);font-size:13px;font-weight:700}.orline::before,.orline::after{content:"";flex:1;height:1px;background:var(--line)}
 </style>
 </head>
 <body>
@@ -458,7 +461,11 @@ const logo=`<svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><
 const clock=s=>Math.floor(s/60)+":"+String(Math.floor(s%60)).padStart(2,"0");
 const now=()=>new Date().toLocaleString("fr-FR",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
 
-const allTasks=()=>VIDEOS.map(v=>v.kind==="video"?{...v,color:CATS[v.cat][1]}:v);
+const isReal=t=>t.kind==="video"||t.kind==="youtube";
+const allTasks=()=>VIDEOS.map(v=>isReal(v)?{...v,color:CATS[v.cat][1]}:v);
+let ytReady=null,ytTimer=null;
+function loadYT(){if(!ytReady)ytReady=new Promise((res,rej)=>{if(window.YT&&YT.Player)return res();const prev=window.onYouTubeIframeAPIReady;window.onYouTubeIframeAPIReady=()=>{if(prev)prev();res()};const sc=document.createElement("script");sc.src="https://www.youtube.com/iframe_api";sc.onerror=()=>{ytReady=null;rej(new Error("YouTube ne répond pas. Vérifie ta connexion."))};document.head.appendChild(sc)});return ytReady}
+function parseYT(u){u=String(u||"").trim();const m=/(?:youtu\.be\/|[?&]v=|\/shorts\/|\/embed\/|\/live\/)([A-Za-z0-9_-]{11})/.exec(u)||/^([A-Za-z0-9_-]{11})$/.exec(u);return m?m[1]:null}
 function probe(file){return new Promise((res,rej)=>{
   const v=document.createElement("video"),u=URL.createObjectURL(file);let done=false;
   const fail=m=>{if(done)return;done=true;URL.revokeObjectURL(u);rej(new Error(m))};
@@ -478,7 +485,7 @@ function closeSheet(){sheetWrap.hidden=true;sheetWrap.innerHTML=""}
 function sms(code){smsEl.innerHTML=`<span class="smsic">${logo}</span><div><b>VuPay</b> <span class="mute small">· mode test</span><div>Code de vérification : <b>${code}</b>. En production, il arrive par SMS.</div></div>`;smsEl.hidden=false;clearTimeout(smsEl.t);smsEl.t=setTimeout(()=>smsEl.hidden=true,9000)}
 
 function releaseVid(){vidURL=null}
-function go(v){if(P.full){P.full=false;exitLandscape();full.hidden=true;full.innerHTML=""}pause();releaseVid();closeSheet();view=v;render();window.scrollTo(0,0)}
+function go(v){if(P.full){clearInterval(ytTimer);if(P.yt){try{P.yt.destroy()}catch(e){}P.yt=null}P.full=false;exitLandscape();full.hidden=true;full.innerHTML=""}pause();releaseVid();closeSheet();view=v;render();window.scrollTo(0,0)}
 function render(){
   nav.hidden=!S.user||view==="player"||view==="advertise";
   nav.querySelectorAll("button").forEach(b=>b.dataset.go===view?b.setAttribute("aria-current","page"):b.removeAttribute("aria-current"));
@@ -542,7 +549,7 @@ function signup(){
     <div class="mfaq">${[["Combien je peux gagner ?","Chaque vidéo rapporte de 150 à 300 FCFA, affichés avant la lecture, plus "+fcfa(BONUS)+" de bonus quand tu valides "+GOAL+" vidéos dans la journée."],
          ["Comment je retire mon argent ?","Depuis l’onglet Gains, dès "+fcfa(MIN_OUT)+" de solde, vers Orange Money, Wave, MTN MoMo ou Moov Money. Les frais sont offerts."],
          ["C’est gratuit ?","Oui. Il faut avoir au moins 18 ans et un numéro Mobile Money."],
-         ["Je suis annonceur, comment diffuser ma vidéo ?","Crée ton compte, puis ouvre l’espace annonceur pour ajouter ta vidéo, fixer le gain par vue et écrire ta question."]]
+         ["Je suis annonceur, comment diffuser ma vidéo ?","Contacte l’équipe VuPay : nous ajoutons ta vidéo, avec le gain par vue et la question de vérification."]]
         .map(([q,a])=>`<details><summary>${q}<span aria-hidden="true">+</span></summary><p>${a}</p></details>`).join("")}</div>
     <div class="endcta"><h2>Prêt à gagner ?</h2>${capForm("bottom")}</div>
     <p class="demo dark">© VuPay · Paiements par Mobile Money</p>
@@ -622,7 +629,7 @@ function otpView(){
 
 /* ---------- accueil ---------- */
 function thumbInner(t){
-  if(t.kind==="video")return t.poster?`<img src="${esc(t.poster)}" alt="">`:`<span class="scene thumb" style="--c:${t.color}"></span>`;
+  if(isReal(t))return t.poster?`<img src="${esc(t.poster)}" alt="">`:`<span class="scene thumb" style="--c:${t.color}"></span>`;
   return `<span class="scene thumb" style="--c:${t.color}"><span class="o1"></span><span class="o2"></span>${artSvg(t)}</span>`;
 }
 function tasks(){
@@ -656,15 +663,15 @@ function tasks(){
   :`<section class="card alldone"><span class="ic">${I.check}</span><div><b>Tout est regardé pour aujourd’hui</b><div class="mute small">De nouvelles vidéos arrivent demain.</div></div></section>`}
   ${rows.map(([k,name,col,list])=>`<section aria-label="${name}"><div class="row between"><h2 class="rowtitle"><span style="background:${col}"></span>${name}${name==="Conseils"?"":"s"}</h2><span class="mute small">${list.length} vidéo${list.length>1?"s":""}</span></div>
     <div class="rail">${list.map(t=>`<button class="scard" data-task="${t.id}" aria-label="${esc(t.title)}, ${clock(t.dur)}, rapporte ${t.pay} FCFA">
-      <span class="vthumb">${thumbInner(t)}<span class="playdot sm">${I.play(18,t.color)}</span><span class="badge dur">${clock(t.dur)}</span>${t.kind==="video"?'<span class="badge new">Nouveau</span>':""}</span>
+      <span class="vthumb">${thumbInner(t)}<span class="playdot sm">${I.play(18,t.color)}</span><span class="badge dur">${clock(t.dur)}</span>${isReal(t)?'<span class="badge new">Nouveau</span>':""}</span>
       <span class="stitle">${esc(t.title)}</span><span class="row between"><span class="mute small">${esc(t.brand)}</span><b class="spay">+${fcfa(t.pay)}</b></span>
     </button>`).join("")}</div></section>`).join("")}
   ${done.length?`<section aria-label="Déjà regardées"><div class="row between"><h2>Déjà regardées</h2><span class="mute small">${done.length}</span></div>
     <div class="rail">${done.map(t=>{const ok=S.done[t.id]==="ok";return`<div class="scard dim"><span class="vthumb">${thumbInner(t)}<span class="doneveil sm">${ok?I.check:""}${ok?"Gagné":"Raté"}</span></span><span class="stitle">${esc(t.title)}</span><span class="mute small">${ok?"+"+fcfa(t.pay):"Pas de gain"}</span></div>`}).join("")}</div></section>`:""}
-  <button class="card adcta" data-go="advertise"><span class="ic">${I.up}</span><span><b>Tu as une vidéo à diffuser ?</b><br><span class="mute small">Ajoute ta propre vidéo dans l’espace annonceur</span></span></button>`;
+  ${S.admin?`<button class="card adcta" data-go="advertise"><span class="ic">${I.up}</span><span><b>Ajouter une vidéo</b><br><span class="mute small">Espace administrateur</span></span></button>`:""}`;
 }
 function card(t){
-  const d=S.done[t.id],[cl,cc]=CATS[t.cat],isV=t.kind==="video";
+  const d=S.done[t.id],[cl,cc]=CATS[t.cat],isV=isReal(t);
   return`<button class="vcard" data-task="${t.id}" ${d?"disabled":""} aria-label="${esc(t.title)}, ${clock(t.dur)}, ${d==="ok"?"déjà gagnée":d==="ko"?"ratée":"rapporte "+t.pay+" FCFA"}">
     <span class="vthumb">${isV?(t.poster?`<img src="${esc(t.poster)}" alt="">`:`<span class="scene thumb" style="--c:${t.color}"></span>`):`<span class="scene thumb" style="--c:${t.color}"><span class="o1"></span><span class="o2"></span>${artSvg(t)}</span>`}
       ${d?`<span class="doneveil">${d==="ok"?I.check+"Gagné":"Raté"}</span>`:`<span class="badge gain">+${fcfa(t.pay)}</span><span class="playdot">${I.play(26,t.color)}</span>`}
@@ -682,7 +689,7 @@ function sceneHTML(t,live){
 async function openTask(id){
   const t=allTasks().find(t=>t.id===id);if(!t)return;
   let d;try{d=await api("POST","/api/views",{videoId:id})}catch(e){toast(e.message);if(e.status===409)refresh();return}
-  cur=t;Object.assign(P,{t:0,max:0,playing:false,full:false,started:false,pick:null,ended:false,frame:-1,viewId:d.viewId});
+  cur=t;Object.assign(P,{t:0,max:0,playing:false,full:false,started:false,pick:null,ended:false,frame:-1,viewId:d.viewId,yt:null});
   releaseVid();if(cur.kind==="video")vidURL=cur.url;
   view="player";render();window.scrollTo(0,0);
 }
@@ -697,7 +704,7 @@ function exitLandscape(){
 }
 function buildFull(){
   const t=cur;if(P.frame<0)P.frame=0;full.hidden=false;
-  full.innerHTML=`<div class="stage">${t.kind==="video"?`<video id="vid" playsinline preload="auto" src="${vidURL}"></video>`:sceneHTML(t,true)}
+  full.innerHTML=`<div class="stage">${t.kind==="video"?`<video id="vid" playsinline preload="auto" src="${vidURL}"></video>`:t.kind==="youtube"?`<div class="ytbox"><div id="yt"></div><div class="ytshield"></div></div>`:sceneHTML(t,true)}
     <div class="spin" id="spin" hidden><i></i></div>
     <button class="close" data-act="close" aria-label="Quitter le plein écran">${I.x}</button>
     <span class="adtag">Sponsorisé · ${esc(t.brand)}</span>
@@ -715,8 +722,25 @@ function buildFull(){
     v.addEventListener("ended",finish);
     v.addEventListener("error",()=>{toast("Impossible de lire cette vidéo");closeFull()});
   }
+  if(t.kind==="youtube"){
+    spin(true);
+    loadYT().then(()=>{if(!P.full||cur!==t)return;
+      P.yt=new YT.Player("yt",{videoId:t.youtubeId,playerVars:{controls:0,disablekb:1,fs:0,rel:0,playsinline:1,modestbranding:1,iv_load_policy:3,start:Math.floor(P.t)},
+        events:{onReady:e=>{spin(false);if(P.playing)e.target.playVideo()},
+          onStateChange:e=>{const S2=YT.PlayerState;
+            if(e.data===S2.ENDED)return finish();
+            if(e.data===S2.BUFFERING)spin(true);
+            if(e.data===S2.PLAYING){spin(false);if(!P.playing){P.playing=true;hud()}}
+            if(e.data===S2.PAUSED&&P.playing){P.playing=false;hud()}},
+          onError:()=>{toast("Cette vidéo YouTube ne peut pas être lue ici.");closeFull()}}});
+      clearInterval(ytTimer);ytTimer=setInterval(ytTick,500)})
+    .catch(e=>{toast(e.message);closeFull()});
+  }
   hud();progress();
 }
+function ytTick(){const y=P.yt;if(!y||!y.getCurrentTime)return;const c=y.getCurrentTime()||0;
+  if(c>P.max+2){y.seekTo(P.max,true);toast("L’avance rapide est désactivée");return}
+  P.t=c;P.max=Math.max(P.max,c);progress()}
 const spin=on=>{const s=$("spin");if(s)s.hidden=!on};
 function hud(){
   const pz=$("pz"),hb=$("hb");if(!hb)return;
@@ -729,23 +753,24 @@ function progress(){
   const tr=$("ftr"),tm=$("ftm"),cap=$("cap"),d=cur.dur;
   if(tr)tr.style.width=Math.min(100,P.t/d*100)+"%";
   if(tm)tm.textContent=clock(P.t)+" / "+clock(d);
-  if(cur.kind!=="video"){const f=Math.min(cur.frames.length-1,Math.floor(P.t/d*cur.frames.length));
+  if(cur.kind==="demo"){const f=Math.min(cur.frames.length-1,Math.floor(P.t/d*cur.frames.length));
     if(f!==P.frame){P.frame=f;if(cap){cap.textContent=cur.frames[f];cap.style.animation="none";void cap.offsetWidth;cap.style.animation=""}}}
 }
 function play(){
   if(!P.full){P.full=true;enterLandscape();buildFull()}
   P.playing=true;hud();
   if(cur.kind==="video"){const v=$("vid");v.play().catch(()=>{P.playing=false;hud()});return}
+  if(cur.kind==="youtube"){if(P.yt&&P.yt.playVideo)P.yt.playVideo();return}
   clearInterval(timer);
   if(!P.started){P.started=true;spin(true);timer=setTimeout(()=>{spin(false);if(P.playing)timer=setInterval(tick,250)},900)}
   else timer=setInterval(tick,250);
 }
-function pause(){P.playing=false;clearInterval(timer);timer=null;const v=$("vid");if(v&&!v.paused)v.pause();spin(false);hud()}
-function closeFull(){pause();P.full=false;exitLandscape();full.hidden=true;full.innerHTML="";player()}
+function pause(){P.playing=false;clearInterval(timer);timer=null;const v=$("vid");if(v&&!v.paused)v.pause();if(P.yt&&P.yt.pauseVideo)try{P.yt.pauseVideo()}catch(e){}spin(false);hud()}
+function closeFull(){pause();clearInterval(ytTimer);if(P.yt){try{P.yt.destroy()}catch(e){}P.yt=null}P.full=false;exitLandscape();full.hidden=true;full.innerHTML="";player()}
 function tick(){P.t=Math.min(cur.dur,P.t+.25);P.max=P.t;if(P.t>=cur.dur)return finish();progress()}
 function finish(){P.ended=true;P.t=cur.dur;closeFull();toast("Vidéo terminée : réponds à la question")}
 function player(){
-  const t=cur,isV=t.kind==="video";
+  const t=cur,isV=isReal(t);
   app.innerHTML=`
   <div class="row"><button class="icon" data-act="back" aria-label="Retour aux vidéos">${I.back}</button><h2>${P.ended?"Question":"Tâche vidéo"}</h2></div>
   <div class="player">${isV?(t.poster?`<img class="poster" src="${esc(t.poster)}" alt="">`:`<span class="scene" style="--c:${t.color}"></span>`):sceneHTML(t,false)}
@@ -769,14 +794,18 @@ async function submit(){
 
 /* ---------- espace annonceur ---------- */
 function advertise(){
+  if(!S.admin)return go("tasks");
   if(MINE===null){MINE=[];api("GET","/api/my-videos").then(r=>{MINE=r;if(view==="advertise")advertise()}).catch(()=>{})}
   app.innerHTML=`
-  <div class="row"><button class="icon" data-act="back" aria-label="Retour">${I.back}</button><h2>Espace annonceur</h2></div>
-  <p class="mute" style="margin:0">Ajoute une vraie vidéo depuis ton téléphone ou ton ordinateur. Elle apparaîtra dans les tâches, en paysage, avec ta question de vérification.</p>
+  <div class="row"><button class="icon" data-act="back" aria-label="Retour">${I.back}</button><h2>Ajouter une vidéo</h2></div>
+  <p class="mute" style="margin:0">Ajoute une vidéo depuis ton téléphone ou ton ordinateur, ou colle un lien YouTube. Elle apparaîtra dans les tâches, en paysage, avec ta question de vérification.</p>
   <form id="af" class="card" style="display:flex;flex-direction:column;gap:14px" novalidate>
     <label class="drop" for="vf">${draft&&draft.poster?`<img src="${esc(draft.poster)}" alt="Aperçu de la vidéo">`:`<span class="ic">${I.up}</span>`}
-      <b>${draft?esc(draft.file.name):"Choisir une vidéo"}</b><span class="mute small">${draft?"Durée : "+clock(draft.dur)+" · toucher pour changer":"MP4 ou MOV, 3 minutes et 95 Mo maximum"}</span>
+      <b>${draft?(draft.yt?"Vidéo YouTube":esc(draft.file.name)):"Choisir un fichier vidéo"}</b><span class="mute small">${draft&&!draft.yt?"Durée : "+clock(draft.dur)+" · toucher pour changer":"MP4 ou MOV, 3 minutes et 95 Mo maximum"}</span>
       <input id="vf" type="file" accept="video/*" class="sr"></label>
+    <div class="orline"><span>ou</span></div>
+    <label for="yu">Lien YouTube<input id="yu" inputmode="url" autocomplete="off" placeholder="https://youtu.be/…" value="${draft&&draft.yt?esc(draft.url):""}"></label>
+    ${draft&&draft.yt?`<label for="yd">Durée de la vidéo (en secondes)<input id="yd" inputmode="numeric" value="${draft.dur?Math.round(draft.dur):""}" placeholder="Ex. 45"></label>`:""}
     <label for="at">Titre de la vidéo<input id="at" maxlength="70" placeholder="Ex. Découvre notre nouvelle boutique" value="${draft?esc(draft.title||""):""}"></label>
     <label for="ab">Nom de la marque<input id="ab" maxlength="30" placeholder="Ex. Boutique Ndeye" value="${draft?esc(draft.brand||""):""}"></label>
     <div class="grid2"><label for="ac">Catégorie<select id="ac"><option value="pub">Publicité</option><option value="tuto">Tutoriel</option><option value="avis">Conseils</option></select></label>
@@ -798,13 +827,28 @@ function advertise(){
       draft={file:f,dur:m.dur,poster:m.poster,title:$("at").value,brand:$("ab").value};advertise()}
     catch(err){ae.textContent="Ce format n’est pas lisible sur cet appareil. Essaie un MP4."}
   };
+  $("yu").onchange=async e=>{
+    const ae=$("ae"),url=e.target.value.trim();if(!url)return;
+    const id=parseYT(url);if(!id){ae.textContent="Ce lien YouTube n’est pas reconnu.";return}
+    draft={yt:id,url,dur:0,poster:"https://i.ytimg.com/vi/"+id+"/hqdefault.jpg",title:$("at").value,brand:$("ab").value};
+    ae.textContent="Lecture de la durée…";
+    draft.dur=await ytDuration(id);advertise();
+    if(!draft.dur)$("ae").textContent="Indique la durée de la vidéo en secondes.";
+  };
   $("af").onsubmit=async e=>{
     e.preventDefault();const ae=$("ae");
+    if(draft&&draft.yt&&$("yd"))draft.dur=+$("yd").value.replace(/[^\d.]/g,"")||0;
     const title=$("at").value.trim(),brand=$("ab").value.trim(),q=$("aq").value.trim(),opts=[0,1,2,3].map(i=>$("o"+i).value.trim());
     if(!draft){ae.textContent="Choisis d’abord une vidéo.";return}
     if(!title||!brand){ae.textContent="Indique le titre et la marque.";return}
     if(!q||opts.some(o=>!o)){ae.textContent="Écris la question et les 4 réponses.";return}
     const sb=$("asb");sb.disabled=true;ae.textContent="";
+    if(draft.yt){
+      if(!draft.dur){sb.disabled=false;ae.textContent="Indique la durée de la vidéo en secondes.";return}
+      try{await api("POST","/api/videos",{youtube:draft.yt,title,brand,cat:$("ac").value,pay:+$("ap").value,q,opts,answer:+app.querySelector("input[name=ar]:checked").value,dur:draft.dur});
+        draft=null;MINE=null;VIDEOS=await api("GET","/api/videos");go("tasks");toast("Vidéo publiée dans les tâches")}
+      catch(err){sb.disabled=false;ae.textContent=err.message}
+      return}
     try{
       const fileId=await upload(draft.file,p=>sb.textContent="Envoi de la vidéo… "+p+" %");
       sb.textContent="Publication…";
@@ -820,6 +864,15 @@ function upload(file,onProgress){return new Promise((res,rej)=>{
   x.upload.onprogress=e=>{if(e.lengthComputable)onProgress(Math.round(e.loaded/e.total*100))};
   x.onload=()=>{let d={};try{d=JSON.parse(x.responseText)}catch(e){}x.status<300?res(d.fileId):rej(new Error(d.error||"Envoi refusé."))};
   x.onerror=()=>rej(new Error("Envoi interrompu. Vérifie ta connexion."));x.send(file)})}
+
+function ytDuration(id){return new Promise(res=>{
+  let done=false;const end=d=>{if(done)return;done=true;try{p&&p.destroy()}catch(e){}box.remove();res(Math.round(d||0))};
+  const box=document.createElement("div");box.style.cssText="position:fixed;left:-9999px;top:0;width:320px;height:180px";box.innerHTML='<div id="ytprobe"></div>';document.body.appendChild(box);
+  let p=null;setTimeout(()=>end(0),12000);
+  loadYT().then(()=>{p=new YT.Player("ytprobe",{videoId:id,playerVars:{mute:1,playsinline:1,controls:0},events:{
+    onReady:e=>{const d=e.target.getDuration();if(d>0)return end(d);e.target.mute();e.target.playVideo()},
+    onStateChange:e=>{const d=e.target.getDuration();if(d>0)end(d)},onError:()=>end(0)}})}).catch(()=>end(0));
+})}
 
 /* ---------- portefeuille ---------- */
 const TXI={video:["var(--mintSoft)","var(--mint)",'<path d="M10 9l5 3-5 3z"/><rect x="3" y="5" width="18" height="14" rx="3"/>'],bonus:["var(--coralSoft)","var(--coral)",'<path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.5 6.7 19.4l1.2-6L3.4 9.3l6-.7z"/>'],out:["var(--blueSoft)","var(--blue)",'<path d="M12 19V5M6 11l6-6 6 6"/>']};
@@ -891,7 +944,7 @@ function profile(){
   <div class="stats"><div class="card"><span class="mute small">Vidéos validées</span><b>${S.watched}</b></div><div class="card"><span class="mute small">Total gagné</span><b style="font-size:20px">${fcfa(S.total)}</b></div></div>
   <section class="refer"><h2>Invite tes amis</h2><span style="opacity:.95">Partage ton code : vous recevez tous les deux un bonus dès sa première vidéo validée.</span>
   <div class="row"><span class="code">${esc(u.code)}</span><button class="wbtn" data-act="copy" style="color:var(--coral)">Copier</button></div></section>
-  <button class="card adcta" data-go="advertise"><span class="ic">${I.up}</span><span><b>Espace annonceur</b><br><span class="mute small">Diffuse tes propres vidéos</span></span></button>
+  ${S.admin?`<button class="card adcta" data-go="advertise"><span class="ic">${I.up}</span><span><b>Ajouter des vidéos</b><br><span class="mute small">Espace administrateur</span></span></button>`:""}
   <section class="card" style="display:flex;flex-direction:column;gap:14px"><h2>Règles du jeu</h2>
   <ul class="rules">
     <li><i><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg></i>Une validation par vidéo et par jour</li>
